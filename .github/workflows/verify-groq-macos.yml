@@ -1,0 +1,29 @@
+name: Verify BridgeClip Groq macOS release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: macos-15
+    steps:
+      - name: Check release image and app security state
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://github.com/arorarajat12-del/bridgeclip/releases/download/groq-macos-0.1.18/BridgeClip-Groq-0.1.18-mac-arm64.dmg'
+          curl --fail --location --retry 3 "$url" -o "$RUNNER_TEMP/BridgeClip-Groq.dmg"
+          shasum -a 256 "$RUNNER_TEMP/BridgeClip-Groq.dmg"
+          hdiutil verify "$RUNNER_TEMP/BridgeClip-Groq.dmg"
+          mkdir -p "$RUNNER_TEMP/bridgeclip-mounted"
+          hdiutil attach -readonly -nobrowse -mountpoint "$RUNNER_TEMP/bridgeclip-mounted" "$RUNNER_TEMP/BridgeClip-Groq.dmg"
+          app="$RUNNER_TEMP/bridgeclip-mounted/BridgeClip Groq.app"
+          test -d "$app"
+          file "$app/Contents/MacOS/BridgeClip Groq"
+          codesign --display --verbose=2 "$app" 2>&1 || true
+          codesign --verify --deep --strict --verbose=2 "$app" 2>&1 || true
+          spctl --assess --type execute --verbose=4 "$app" 2>&1 || true
+          hdiutil detach "$RUNNER_TEMP/bridgeclip-mounted"

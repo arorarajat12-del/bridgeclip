@@ -14,11 +14,12 @@ workflow puts the DMG on the fork's public Releases page for direct sharing.
 The build stages its own Python, FFmpeg, and yt-dlp runtime and runs checks
 before packaging. A Groq key is entered after installation; no key is built in.
 
-These are **unsigned local builds**, not official BridgeMind releases. They
-have a separate app ID and data folder, do not auto-update, and may require
-macOS to approve opening an app from an unidentified developer. A signed,
-notarized public release requires an Apple Developer ID and notarization
-credentials held by the publisher.
+These are **ad-hoc signed local builds**, not official BridgeMind releases.
+The build checks the app bundle signature before publishing. They have a
+separate app ID and data folder, do not auto-update, and may require macOS to
+approve opening an app from an unidentified developer in System Settings →
+Privacy & Security. An Apple notarized public release requires an Apple
+Developer ID and notarization credentials held by the publisher.
 
 For a local build on an Apple silicon Mac:
 

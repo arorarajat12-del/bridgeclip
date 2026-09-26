@@ -33,12 +33,12 @@ jobs:
         run: |
           set -euo pipefail
           ls -lh installers/*.dmg
-          tag=groq-macos-0.1.18
+          tag=groq-macos-0.1.18-2
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$tag" installers/*.dmg --repo "$GITHUB_REPOSITORY" --clobber
           else
             gh release create "$tag" installers/*.dmg \
               --repo "$GITHUB_REPOSITORY" \
-              --title 'BridgeClip Groq for macOS' \
-              --notes 'BridgeClip with a separate Groq API key option. Unsigned macOS 15 installer for Apple silicon Macs.'
+              --title 'BridgeClip Groq for macOS (ARM64)' \
+              --notes 'BridgeClip with a separate Groq API key option. Ad-hoc signed macOS 15 installer for Apple silicon Macs. This build is not Apple notarized; macOS may require Open Anyway in Privacy & Security.'
           fi

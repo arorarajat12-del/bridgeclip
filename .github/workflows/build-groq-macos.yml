@@ -8,15 +8,7 @@ permissions:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15
-            arch: arm64
-          - runner: macos-15-intel
-            arch: x64
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-15
     timeout-minutes: 180
     env:
       HOMEBREW_NO_AUTO_UPDATE: '1'
@@ -38,15 +30,15 @@ jobs:
           npm run lint
           npm run test:renderer
       - name: Prepare bundled macOS runtime
-        run: bash scripts/prepare-resources.sh "${{ matrix.arch }}"
+        run: bash scripts/prepare-resources.sh arm64
       - name: Build macOS installer
         run: |
           npm run build
-          npx electron-builder --mac --${{ matrix.arch }} --publish never --config electron-builder.groq-mac.yml
+          npx electron-builder --mac --arm64 --publish never --config electron-builder.groq-mac.yml
       - name: Upload macOS installers
         uses: actions/upload-artifact@v4
         with:
-          name: BridgeClip-Groq-macOS-${{ matrix.arch }}
+          name: BridgeClip-Groq-macOS-arm64
           path: |
             dist/*.dmg
             dist/*.zip

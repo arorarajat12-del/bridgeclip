@@ -24,7 +24,7 @@ jobs:
         with:
           run-id: ${{ github.event_name == 'workflow_dispatch' && inputs.run_id || github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          pattern: BridgeClip-Groq-macOS-*
+          pattern: BridgeClip-Groq-macOS-arm64
           path: installers
           merge-multiple: true
       - name: Publish public release
@@ -40,5 +40,5 @@ jobs:
             gh release create "$tag" installers/*.dmg \
               --repo "$GITHUB_REPOSITORY" \
               --title 'BridgeClip Groq for macOS' \
-              --notes 'BridgeClip with a separate Groq API key option. Unsigned macOS installers for Apple silicon and Intel Macs.'
+              --notes 'BridgeClip with a separate Groq API key option. Unsigned macOS 15 installer for Apple silicon Macs.'
           fi

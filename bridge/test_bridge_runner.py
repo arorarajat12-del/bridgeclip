@@ -56,7 +56,7 @@ class BridgeTests(unittest.TestCase):
                 return types.SimpleNamespace(status="completed", output=Output([]), job_id="job-123")
         modules = {
             "clip_engine.config": types.SimpleNamespace(
-                get_settings=lambda: types.SimpleNamespace(openrouter_api_key="test-openrouter"),
+                get_settings=lambda: types.SimpleNamespace(openrouter_api_key="test-openrouter", active_ai_key="test-openrouter", ai_provider="openrouter"),
                 get_caption_preset=lambda name: None),
             "clip_engine.bridge_contract": types.SimpleNamespace(BRIDGE_CONTRACT_VERSION=2),
             "clip_engine.logging_safety": types.SimpleNamespace(install_safe_logging=lambda: None),
@@ -88,7 +88,7 @@ class BridgeTests(unittest.TestCase):
         observed = []
         def get_settings():
             observed.append((os.environ["LOCAL_MODE"], os.environ["LOCAL_OUTPUT_DIR"], os.environ["LAYOUT_VISION_ENABLED"]))
-            return types.SimpleNamespace(openrouter_api_key=None)
+            return types.SimpleNamespace(openrouter_api_key=None, active_ai_key=None, ai_provider="openrouter")
         config_module = types.SimpleNamespace(get_settings=get_settings, get_caption_preset=lambda name: None)
         pipeline_module = types.SimpleNamespace(AIClippingPipeline=None, ClippingJobRequest=None, JobStatus=None)
         with patch.dict(sys.modules, {"clip_engine.config": config_module, "clip_engine.bridge_contract": types.SimpleNamespace(BRIDGE_CONTRACT_VERSION=2), "clip_engine.logging_safety": types.SimpleNamespace(install_safe_logging=lambda: None), "clip_engine.services.ai_clipping_pipeline": pipeline_module}), patch.dict(os.environ, {"LOCAL_MODE": "false"}), redirect_stdout(io.StringIO()):
@@ -99,7 +99,7 @@ class BridgeTests(unittest.TestCase):
         observed = []
         def get_settings():
             observed.append(os.environ["LAYOUT_VISION_ENABLED"])
-            return types.SimpleNamespace(openrouter_api_key=None)
+            return types.SimpleNamespace(openrouter_api_key=None, active_ai_key=None, ai_provider="openrouter")
         config_module = types.SimpleNamespace(get_settings=get_settings, get_caption_preset=lambda name: None)
         pipeline_module = types.SimpleNamespace(AIClippingPipeline=None, ClippingJobRequest=None, JobStatus=None)
         modules = {"clip_engine.config": config_module, "clip_engine.bridge_contract": types.SimpleNamespace(BRIDGE_CONTRACT_VERSION=2), "clip_engine.logging_safety": types.SimpleNamespace(install_safe_logging=lambda: None), "clip_engine.services.ai_clipping_pipeline": pipeline_module}
@@ -113,7 +113,7 @@ class BridgeTests(unittest.TestCase):
             observed.append({key: os.environ.get(key) for key in (
                 "CLIPPING_MODE", "PLANNER_MODEL", "PLANNER_FALLBACK_MODELS", "LAYOUT_VISION_ENABLED"
             )})
-            return types.SimpleNamespace(openrouter_api_key=None)
+            return types.SimpleNamespace(openrouter_api_key=None, active_ai_key=None, ai_provider="openrouter")
         modules = {
             "clip_engine.config": types.SimpleNamespace(get_settings=get_settings, get_caption_preset=lambda name: None),
             "clip_engine.bridge_contract": types.SimpleNamespace(BRIDGE_CONTRACT_VERSION=2),
@@ -138,7 +138,7 @@ class BridgeTests(unittest.TestCase):
         keys = ("CLIPPING_MODE", "PLANNER_MODEL", "ADVANCED_TRANSCRIPTION_MODEL", "PLANNER_FALLBACK_MODELS", "PLANNER_MAX_OUTPUT_TOKENS", "PLANNER_SUPPORTS_IMAGES")
         def get_settings():
             observed.append({key: os.environ.get(key) for key in keys})
-            return types.SimpleNamespace(openrouter_api_key=None)
+            return types.SimpleNamespace(openrouter_api_key=None, active_ai_key=None, ai_provider="openrouter")
         modules = {
             "clip_engine.config": types.SimpleNamespace(get_settings=get_settings, get_caption_preset=lambda name: None),
             "clip_engine.bridge_contract": types.SimpleNamespace(BRIDGE_CONTRACT_VERSION=2),
@@ -181,7 +181,7 @@ class BridgeTests(unittest.TestCase):
         observed = []
         def get_settings():
             observed.append((os.environ["YTDLP_PROXIES"], os.environ["YTDLP_PROXY"]))
-            return types.SimpleNamespace(openrouter_api_key=None)
+            return types.SimpleNamespace(openrouter_api_key=None, active_ai_key=None, ai_provider="openrouter")
         config_module = types.SimpleNamespace(get_settings=get_settings, get_caption_preset=lambda name: None)
         pipeline_module = types.SimpleNamespace(AIClippingPipeline=None, ClippingJobRequest=None, JobStatus=None)
         with patch.dict(sys.modules, {"clip_engine.config": config_module, "clip_engine.bridge_contract": types.SimpleNamespace(BRIDGE_CONTRACT_VERSION=2), "clip_engine.logging_safety": types.SimpleNamespace(install_safe_logging=lambda: None), "clip_engine.services.ai_clipping_pipeline": pipeline_module}), patch.dict(os.environ, {"YTDLP_PROXIES": "socks5h://user:pass@proxy:1"}), redirect_stdout(io.StringIO()):

@@ -17,6 +17,8 @@ import type { UpdateState } from '../shared/updates'
 
 export interface ClipSettings {
   openrouterConfigured: boolean
+  groqConfigured: boolean
+  aiProvider: 'openrouter' | 'groq'
   zernioConfigured: boolean
   outputDirectory: string
   pythonPath: string
@@ -71,7 +73,7 @@ export interface BridgeClipAPI {
   settings: {
     load: () => Promise<ClipSettings>
     save: (settings: ClipSettings) => Promise<ClipSettings>
-    replaceApiKey: (key: 'openrouterApiKey' | 'zernioApiKey', value: string) => Promise<ClipSettings>
+    replaceApiKey: (key: 'openrouterApiKey' | 'groqApiKey' | 'zernioApiKey', value: string) => Promise<ClipSettings>
     selectOutputDir: () => Promise<string | null>
   }
   zernio: {

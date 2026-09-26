@@ -951,7 +951,7 @@ class LayoutAnalyzer:
     # -- vision ---------------------------------------------------------------
 
     def _vision_enabled(self) -> bool:
-        return bool(self.settings.layout_vision_enabled and self.settings.openrouter_api_key)
+        return bool(self.settings.layout_vision_enabled and self.settings.active_ai_key)
 
     async def _vision_classify(
         self, keyframe: bytes, shot_frames: list[FrameInfo], heuristic: ShotLayout,
@@ -984,10 +984,16 @@ class LayoutAnalyzer:
             "response_format": json_schema_format("frame_layout", VISION_SCHEMA),
             "provider": {"require_parameters": True},
         }
-        fallbacks = self.settings.get_layout_vision_fallback_models()
+        if self.settings.ai_provider == "groq":
+            payload.pop("provider", None)
+            payload["temperature"] = 0.0
+            fallbacks = []
+        else:
+            fallbacks = self.settings.get_layout_vision_fallback_models()
         if fallbacks:
             payload["models"] = fallbacks
-        apply_reasoning(payload, self.settings.layout_vision_reasoning_effort, temperature=0.0)
+        if self.settings.ai_provider != "groq":
+            apply_reasoning(payload, self.settings.layout_vision_reasoning_effort, temperature=0.0)
 
         client = await self._get_client()
         for attempt in range(2):
@@ -1010,10 +1016,10 @@ class LayoutAnalyzer:
     async def _get_client(self) -> httpx.AsyncClient:
         if self._http_client is None or self._http_client.is_closed:
             self._http_client = httpx.AsyncClient(
-                base_url=self.settings.openrouter_base_url,
+                base_url=self.settings.ai_base_url,
                 timeout=httpx.Timeout(120.0, connect=20.0),
                 headers={
-                    "Authorization": f"Bearer {self.settings.openrouter_api_key}",
+                    "Authorization": f"Bearer {self.settings.active_ai_key}",
                     "HTTP-Referer": "https://github.com/bridge-mind/bridgeclip",
                     "X-Title": "BridgeClip AI Clipping Agent",
                 },

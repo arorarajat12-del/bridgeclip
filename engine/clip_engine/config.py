@@ -589,6 +589,16 @@ class Settings(BaseSettings):
 
     # API Keys (required)
     openrouter_api_key: Optional[str] = None
+    groq_api_key: Optional[str] = None
+    ai_provider: Literal["openrouter", "groq"] = "openrouter"
+
+    @property
+    def active_ai_key(self) -> Optional[str]:
+        return self.groq_api_key if self.ai_provider == "groq" else self.openrouter_api_key
+
+    @property
+    def ai_base_url(self) -> str:
+        return "https://api.groq.com/openai/v1" if self.ai_provider == "groq" else self.openrouter_base_url
 
     # Security - API authentication
     bridgeclip_api_key: Optional[str] = None  # API key for authenticating incoming requests
@@ -799,10 +809,12 @@ class Settings(BaseSettings):
     # Transcription uses the same OpenRouter key as planning.
     @property
     def transcription_provider(self) -> str:
-        return "openrouter"
+        return self.ai_provider
 
     @property
     def transcription_model(self) -> str:
+        if self.ai_provider == "groq":
+            return "whisper-large-v3-turbo" if self.clipping_mode == "economy" else "whisper-large-v3"
         if self.clipping_mode == "advanced":
             if not self.advanced_transcription_model:
                 raise ValueError("Choose a transcription model in Advanced mode")

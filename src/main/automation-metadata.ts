@@ -32,32 +32,34 @@ function youtubeTagsLength(tags: string[]): number {
   return tags.reduce((length, tag, index) => length + [...tag].length + (/\s/.test(tag) ? 2 : 0) + (index > 0 ? 1 : 0), 0)
 }
 
-function endpoint(name: 'BRIDGECLIP_E2E_TRANSCRIPTION_URL' | 'BRIDGECLIP_E2E_OPENROUTER_URL', production: string): string {
+function endpoint(name: 'BRIDGECLIP_E2E_TRANSCRIPTION_URL' | 'BRIDGECLIP_E2E_OPENROUTER_URL' | 'BRIDGECLIP_E2E_GROQ_TRANSCRIPTION_URL' | 'BRIDGECLIP_E2E_GROQ_URL', production: string): string {
   return app.isPackaged ? production : process.env[name] || production
 }
 
-async function providerResponse(response: Response, operation: 'transcription' | 'metadata', maxBytes = 100_000): Promise<Record<string, unknown>> {
+async function providerResponse(response: Response, operation: 'transcription' | 'metadata', maxBytes = 100_000, provider = 'OpenRouter'): Promise<Record<string, unknown>> {
   if (!response.ok) {
     const status = response.status
-    if (status === 401 || status === 403) throw new Error('OpenRouter rejected the API key. Check it in Settings.')
-    if (status === 402) throw new Error('OpenRouter reports insufficient credits. Check your OpenRouter account.')
-    if (status === 429) throw new Error('OpenRouter is rate limiting requests. Try again shortly.')
-    if (status === 400) throw new Error(`OpenRouter rejected the ${operation} request (400). ${operation === 'transcription' ? 'The clip audio or request format may be unsupported.' : 'Try again or use manual metadata.'}`)
-    throw new Error(`OpenRouter ${operation} failed (${status}). Try again later.`)
+    if (status === 401 || status === 403) throw new Error(`${provider} rejected the API key. Check it in Settings.`)
+    if (status === 402) throw new Error(`${provider} reports insufficient credits. Check your ${provider} account.`)
+    if (status === 429) throw new Error(`${provider} is rate limiting requests. Try again shortly.`)
+    if (status === 400) throw new Error(`${provider} rejected the ${operation} request (400). ${operation === 'transcription' ? 'The clip audio or request format may be unsupported.' : 'Try again or use manual metadata.'}`)
+    throw new Error(`${provider} ${operation} failed (${status}). Try again later.`)
   }
-  const raw = await readResponseText(response, maxBytes, 'OpenRouter returned too much metadata.')
+  const raw = await readResponseText(response, maxBytes, `${provider} returned too much metadata.`)
   try {
     const parsed: unknown = JSON.parse(raw)
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>
   } catch { /* Safe fixed error below. */ }
-  throw new Error('OpenRouter returned an invalid response. Try again.')
+  throw new Error(`${provider} returned an invalid response. Try again.`)
 }
 
 /** Use the same OpenRouter account for speech recognition and metadata writing. */
 export async function transcribeAutomationClip(path: string): Promise<string> {
   const settings = loadSettings()
-  const key = settings.openrouterApiKey
-  if (!key) throw new Error('Add an OpenRouter API key in Settings to transcribe automation clips.')
+  const groq = settings.aiProvider === 'groq'
+  const provider = groq ? 'Groq' : 'OpenRouter'
+  const key = groq ? settings.groqApiKey : settings.openrouterApiKey
+  if (!key) throw new Error(`Add a ${provider} API key in Settings to transcribe automation clips.`)
   const directory = await mkdtemp(join(tmpdir(), 'bridgeclip-transcript-'))
   try {
     // Bound each request rather than sending an entire long recording to STT.
@@ -76,17 +78,26 @@ export async function transcribeAutomationClip(path: string): Promise<string> {
     let transcript = ''
     for (const file of files) {
       const bytes = await readFile(join(directory, file))
-      const result = await providerResponse(await fetch(endpoint('BRIDGECLIP_E2E_TRANSCRIPTION_URL', 'https://openrouter.ai/api/v1/audio/transcriptions'), {
+      const form = new FormData()
+      if (groq) {
+        form.append('file', new Blob([new Uint8Array(bytes)], { type: 'audio/wav' }), file)
+        form.append('model', 'whisper-large-v3-turbo')
+        form.append('response_format', 'verbose_json')
+        if (phrases.length) form.append('prompt', `Expected vocabulary: ${phrases.join(', ')}`)
+      }
+      const result = await providerResponse(await fetch(groq
+        ? endpoint('BRIDGECLIP_E2E_GROQ_TRANSCRIPTION_URL', 'https://api.groq.com/openai/v1/audio/transcriptions')
+        : endpoint('BRIDGECLIP_E2E_TRANSCRIPTION_URL', 'https://openrouter.ai/api/v1/audio/transcriptions'), {
         method: 'POST',
-        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        headers: { Authorization: `Bearer ${key}`, ...(!groq ? { 'Content-Type': 'application/json' } : {}) },
+        body: groq ? form : JSON.stringify({
           model: 'microsoft/mai-transcribe-2', input_audio: { data: bytes.toString('base64'), format: 'wav' },
           response_format: 'verbose_json',
           ...(phrases.length ? { provider: { options: { azure: { phraseList: { phrases } } } } } : {})
         }),
         redirect: 'error', signal: AbortSignal.timeout(90_000)
-      }), 'transcription', 2_000_000)
-      if (typeof result.text !== 'string') throw new Error('OpenRouter returned an invalid transcript. Try again.')
+      }), 'transcription', 2_000_000, provider)
+      if (typeof result.text !== 'string') throw new Error(`${provider} returned an invalid transcript. Try again.`)
       const text = [...result.text].map((character) => {
         const code = character.charCodeAt(0)
         return code <= 31 || code === 127 ? ' ' : character
@@ -97,7 +108,7 @@ export async function transcribeAutomationClip(path: string): Promise<string> {
     if (!transcript) throw new Error('No speech was detected in this clip. Use manual metadata for silent clips.')
     return transcript
   } catch (error) {
-    if (error instanceof Error && /OpenRouter|No speech|transcript is too long|audio is too long/.test(error.message)) throw error
+    if (error instanceof Error && /OpenRouter|Groq|No speech|transcript is too long|audio is too long/.test(error.message)) throw error
     throw new Error('The clip audio could not be transcribed. Check that it has a playable audio track and try again.')
   } finally { await rm(directory, { recursive: true, force: true }) }
 }
@@ -165,8 +176,10 @@ export function parseGeneratedMetadata(value: unknown, platforms: readonly Platf
 
 export async function generateAutomationMetadata(transcript: string, title: string, notes: string, platforms: readonly Platform[], context: MetadataContext = {}): Promise<GeneratedPlatformMetadata[]> {
   const settings = loadSettings()
-  const key = settings.openrouterApiKey
-  if (!key) throw new Error('Add an OpenRouter API key in Settings to generate automation metadata.')
+  const groq = settings.aiProvider === 'groq'
+  const provider = groq ? 'Groq' : 'OpenRouter'
+  const key = groq ? settings.groqApiKey : settings.openrouterApiKey
+  if (!key) throw new Error(`Add a ${provider} API key in Settings to generate automation metadata.`)
   const vocabulary = vocabularyTerms(settings.customVocabulary)
   const names = [...new Set(platforms)]
   const schema = {
@@ -194,25 +207,28 @@ export async function generateAutomationMetadata(transcript: string, title: stri
   let validationFeedback: string | null = null
   for (let attempt = 0; attempt < 2; attempt++) {
     let response: Record<string, unknown>
-    try { response = await providerResponse(await fetch(endpoint('BRIDGECLIP_E2E_OPENROUTER_URL', 'https://openrouter.ai/api/v1/chat/completions'), {
+    try { response = await providerResponse(await fetch(groq
+      ? endpoint('BRIDGECLIP_E2E_GROQ_URL', 'https://api.groq.com/openai/v1/chat/completions')
+      : endpoint('BRIDGECLIP_E2E_OPENROUTER_URL', 'https://openrouter.ai/api/v1/chat/completions'), {
       method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://github.com/bridge-mind/bridgeclip', 'X-Title': 'BridgeClip' },
       redirect: 'error',
       signal: AbortSignal.timeout(120_000),
-      body: JSON.stringify({ model: MODEL, messages: [
+      body: JSON.stringify({ model: groq ? 'openai/gpt-oss-120b' : MODEL, messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: JSON.stringify(input) },
         ...(validationFeedback ? [{ role: 'user', content: `Regenerate all posts. The previous result failed validation: ${validationFeedback} Check every platform's required fields and caption rules. Copy each evidence phrase as a contiguous excerpt of the transcript. Remove any claim that cannot be supported by that excerpt. Use a Threads topic only when it appears verbatim in the transcript.` }] : [])
-      ], response_format: { type: 'json_schema', json_schema: { name: 'automation_metadata', strict: true, schema } }, provider: { require_parameters: true }, max_tokens: 4000 })
-    }), 'metadata') } catch (error) {
-      if (error instanceof Error && error.message.startsWith('OpenRouter')) throw error
-      throw new Error('OpenRouter could not be reached. The clip was not posted; try again later.')
+      ], response_format: groq ? { type: 'json_object' } : { type: 'json_schema', json_schema: { name: 'automation_metadata', strict: true, schema } },
+      ...(!groq ? { provider: { require_parameters: true } } : {}), max_tokens: 4000 })
+    }), 'metadata', 100_000, provider) } catch (error) {
+      if (error instanceof Error && error.message.startsWith(provider)) throw error
+      throw new Error(`${provider} could not be reached. The clip was not posted; try again later.`)
     }
     const choices = response.choices
     const content = Array.isArray(choices) ? (choices[0] as { message?: { content?: unknown } })?.message?.content : null
-    if (typeof content !== 'string') throw new Error('OpenRouter returned no metadata. The clip was not posted.')
+    if (typeof content !== 'string') throw new Error(`${provider} returned no metadata. The clip was not posted.`)
     try { return parseGeneratedMetadata(JSON.parse(content), names, transcript, context) }
     catch (error) {
-      if (error instanceof SyntaxError) throw new Error('OpenRouter returned invalid metadata JSON. The clip was not posted.')
+      if (error instanceof SyntaxError) throw new Error(`${provider} returned invalid metadata JSON. The clip was not posted.`)
       if (attempt === 0 && error instanceof Error && /^AI(?: metadata|-generated)/.test(error.message)) {
         validationFeedback = error.message
         continue

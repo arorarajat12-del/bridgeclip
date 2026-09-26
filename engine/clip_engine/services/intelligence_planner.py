@@ -228,8 +228,8 @@ class IntelligencePlannerService:
         self.settings = get_settings()
         self._http_client: Optional[httpx.AsyncClient] = None
         
-        if not self.settings.openrouter_api_key:
-            logger.warning("OPENROUTER_API_KEY not set, intelligence planning will fail")
+        if not self.settings.active_ai_key:
+            logger.warning("Selected AI provider key not set, intelligence planning will fail")
 
     def calculate_optimal_clip_count(
         self,
@@ -353,11 +353,11 @@ class IntelligencePlannerService:
         """Get or create HTTP client."""
         if self._http_client is None or self._http_client.is_closed:
             self._http_client = httpx.AsyncClient(
-                base_url=self.settings.openrouter_base_url,
+                base_url=self.settings.ai_base_url,
                 # Reasoning over a multi-hour transcript can take minutes.
                 timeout=httpx.Timeout(600.0, connect=30.0),
                 headers={
-                    "Authorization": f"Bearer {self.settings.openrouter_api_key}",
+                    "Authorization": f"Bearer {self.settings.active_ai_key}",
                     "HTTP-Referer": "https://github.com/bridge-mind/bridgeclip",
                     "X-Title": "BridgeClip AI Clipping Agent",
                 },
@@ -524,7 +524,9 @@ class IntelligencePlannerService:
         
         logger.info("Transcript text length: %s chars", len(transcript_text))
         
-        frames_to_send = frames[:48]
+        # Groq vision accepts at most three images per request. For silent
+        # videos, describe small batches before the text planner runs.
+        frames_to_send = (frames[:12] if not transcript else []) if self.settings.ai_provider == "groq" else frames[:48]
         if self.settings.clipping_mode == "advanced" and not self.settings.planner_supports_images:
             if not transcript:
                 raise VisualPlanningUnsupportedError("Selected planner requires a video with speech")
@@ -556,15 +558,29 @@ class IntelligencePlannerService:
         messages = self._build_vision_messages(
             system_prompt,
             transcript_text,
-            frame_images,
+            [] if self.settings.ai_provider == "groq" else frame_images,
             clip_count,
             transcript,
             self._current_video_duration or effective_duration_seconds,
             longform,
         )
+        if self.settings.ai_provider == "groq" and frame_images:
+            descriptions = []
+            client = await self._get_client()
+            for offset in range(0, len(frame_images), 3):
+                batch = frame_images[offset:offset + 3]
+                content = [{"type": "text", "text": "Describe visible actions and scene changes in these video frames. State only what is visible, and preserve each timestamp. Be concise."}]
+                for frame in batch:
+                    content.append({"type": "text", "text": f"Frame at {frame['timestamp_ms'] / 1000:.1f} seconds:"})
+                    content.append({"type": "image_url", "image_url": {"url": f"data:{frame['mime_type']};base64,{frame['base64']}"}})
+                body, _ = await chat_completion(client, {"model": "qwen/qwen3.8-27b", "messages": [{"role": "user", "content": content}], "max_tokens": 600, "temperature": 0})
+                description, _ = message_text(body)
+                if description:
+                    descriptions.append(description)
+            messages.append({"role": "user", "content": "Visual observations from sampled frames. Use only these observations as evidence for silent-video clips:\n" + "\n".join(descriptions)})
         
         model_name = self.settings.planner_model
-        fallback_models = self.settings.get_planner_fallback_models()
+        fallback_models = self.settings.get_planner_fallback_models() if self.settings.ai_provider == "openrouter" else []
         logger.info(
             f"Calling planner model {model_name} "
             f"(fallbacks: {fallback_models or 'none'}, "
@@ -597,7 +613,7 @@ class IntelligencePlannerService:
                     cumulative_cost += usage_data["cost"]
                 else:
                     cost_reported = False
-                    pricing = MODEL_PRICING.get(served_by, DEFAULT_PRICING)
+                    pricing = None if self.settings.ai_provider == "groq" else MODEL_PRICING.get(served_by, DEFAULT_PRICING)
                     if self.settings.clipping_mode == "advanced":
                         if self.settings.planner_input_price is not None and self.settings.planner_output_price is not None:
                             pricing = {"input": self.settings.planner_input_price, "output": self.settings.planner_output_price}
@@ -628,14 +644,14 @@ class IntelligencePlannerService:
             result.segments = self._finalize_clips(result.segments, clip_count)
             result.total_clips = len(result.segments)
             result.api_costs = PlanningApiCosts(
-                provider="openrouter",
+                provider=self.settings.ai_provider,
                 model=served_by,
                 prompt_tokens=cumulative_prompt_tokens,
                 completion_tokens=cumulative_completion_tokens,
                 total_tokens=cumulative_total_tokens,
                 estimated_cost_usd=round(cumulative_cost, 6),
                 attempts=attempts_made,
-                cost_incomplete=cost_incomplete,
+                cost_incomplete=cost_incomplete or self.settings.ai_provider == "groq",
             )
             logger.info(
                 f"Planning API cost: ${cumulative_cost:.6f} "
@@ -986,6 +1002,11 @@ Do not overlap clips by more than 5 seconds."""
             # provider can't silently drop the schema or reasoning settings.
             "provider": {"require_parameters": True},
         }
+        if self.settings.ai_provider == "groq":
+            payload.pop("plugins", None)
+            payload.pop("provider", None)
+            payload["temperature"] = 0.2
+            return payload
         if fallback_models:
             payload["models"] = fallback_models
 

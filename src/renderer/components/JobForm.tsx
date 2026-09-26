@@ -18,6 +18,7 @@ import { onRadioKeyDown } from './ui/Segmented'
 import { DURATION_OPTIONS, VIDEO_SPEED_OPTIONS } from '../../shared/job-contract'
 import { isModelId } from '../../shared/openrouter-models'
 import { useModelStore } from '../store/use-model-store'
+import { useSettingsStore } from '../store/use-settings-store'
 import { ModelPicker } from './ModelPicker'
 
 const DURATIONS = DURATION_OPTIONS
@@ -98,7 +99,11 @@ type Update = (patch: Partial<ClipDraft>) => void
  */
 export function JobForm({ onSubmit, onViewJob, blockedReason, submitting, className }: JobFormProps): React.JSX.Element {
   const draft = useDraftStore()
+  const aiProvider = useSettingsStore((s) => s.aiProvider)
   const { update, step, setStep } = draft
+  useEffect(() => {
+    if (aiProvider === 'groq' && draft.clippingMode === 'advanced') update({ clippingMode: 'quality' })
+  }, [aiProvider, draft.clippingMode, update])
 
   const trim = useMemo(
     () => parseTrimRange(draft.trimOpen, draft.trimStart, draft.trimEnd),
@@ -272,6 +277,7 @@ function VideoStep({ draft, update, trimError, disabled }: { draft: ClipDraft; u
 
 /** Format, framing and pacing. Exported for the keyboard-navigation test. */
 export function FormatStep({ draft, update }: { draft: ClipDraft; update: Update }): React.JSX.Element {
+  const aiProvider = useSettingsStore((s) => s.aiProvider)
   return (
     <div className="space-y-4">
       <Group label="Format">
@@ -345,7 +351,7 @@ export function FormatStep({ draft, update }: { draft: ClipDraft; update: Update
             <SettingRow
               className="mt-2"
               title="Check tricky shots with AI vision"
-              description="Checks uncertain shots. May add OpenRouter charges."
+              description={`Checks uncertain shots. May add ${aiProvider === 'groq' ? 'Groq' : 'OpenRouter'} charges.`}
               control={<Switch label="AI vision for smart framing" checked={draft.layoutVision} onChange={(layoutVision) => update({ layoutVision })} />}
             />
           )}
@@ -385,6 +391,7 @@ export function FormatStep({ draft, update }: { draft: ClipDraft; update: Update
 }
 
 export function ClipsStep({ draft, update }: { draft: ClipDraft; update: Update }): React.JSX.Element {
+  const aiProvider = useSettingsStore((s) => s.aiProvider)
   const toggleDuration = (id: string): void => {
     update({ durations: draft.durations.includes(id) ? draft.durations.filter((d) => d !== id) : [...draft.durations, id] })
   }
@@ -393,16 +400,17 @@ export function ClipsStep({ draft, update }: { draft: ClipDraft; update: Update 
       <Group label="Clipping mode">
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Clipping mode">
           {([
-            { id: 'quality', label: 'Quality', hint: 'Opus 5.5 planning · MAI Transcribe 2' },
-            { id: 'economy', label: 'Economy', hint: 'GLM 5.3 Flash planning · Whisper Turbo' },
+            { id: 'quality', label: 'Quality', hint: aiProvider === 'groq' ? 'GPT OSS 120B planning · Whisper V3' : 'Opus 5.5 planning · MAI Transcribe 2' },
+            { id: 'economy', label: 'Economy', hint: aiProvider === 'groq' ? 'GPT OSS 20B planning · Whisper Turbo' : 'GLM 5.3 Flash planning · Whisper Turbo' },
             { id: 'advanced', label: 'Advanced', hint: 'Choose your OpenRouter models' }
           ] as const).map((mode) => {
             const selected = draft.clippingMode === mode.id
             return <button key={mode.id} type="button" role="radio" aria-checked={selected} tabIndex={selected ? 0 : -1}
-              onKeyDown={onRadioKeyDown} onClick={() => update({ clippingMode: mode.id })}
+              onKeyDown={onRadioKeyDown} onClick={() => aiProvider !== 'groq' || mode.id !== 'advanced' ? update({ clippingMode: mode.id }) : undefined}
+              disabled={aiProvider === 'groq' && mode.id === 'advanced'}
               className={cn('glass-tile glass-tile-hover rounded-xl px-3 py-2.5 text-left', selected && 'glass-selected')}>
               <span className="block text-sm font-medium text-ink">{mode.label}</span>
-              <span className="block text-2xs text-ink-subtle">{mode.hint}</span>
+              <span className="block text-2xs text-ink-subtle">{aiProvider === 'groq' && mode.id === 'advanced' ? 'Available with OpenRouter' : mode.hint}</span>
             </button>
           })}
         </div>
@@ -501,6 +509,7 @@ function ReviewStep({ draft, trim, onEdit }: {
   onEdit: (step: WizardStep) => void
 }): React.JSX.Element {
   const active = useActiveJobs()
+  const aiProvider = useSettingsStore((s) => s.aiProvider)
   const runningCount = active.filter((job) => job.status !== 'queued').length
   const lengths = draft.durations.length === 0
     ? 'Any length'
@@ -544,7 +553,7 @@ function ReviewStep({ draft, trim, onEdit }: {
           ? `${runningCount} jobs are running. This one waits in the queue and starts automatically.`
           : active.length > 0
             ? `Runs alongside ${active.length} other job${active.length === 1 ? '' : 's'}. Up to ${MAX_PARALLEL_JOBS} run at once.`
-            : 'Runs on this computer. Transcription and clip planning bill your OpenRouter account.'}
+            : `Runs on this computer. Transcription and clip planning bill your ${aiProvider === 'groq' ? 'Groq' : 'OpenRouter'} account.`}
       </p>
     </div>
   )

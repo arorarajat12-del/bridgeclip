@@ -10,6 +10,8 @@ import { randomUUID } from 'crypto'
  */
 export interface AppSettings {
   openrouterApiKey: string
+  groqApiKey: string
+  aiProvider: 'openrouter' | 'groq'
   /** Optional: connects social accounts for posting. Used only by the main process, never sent to the engine. */
   zernioApiKey: string
   outputDirectory: string
@@ -18,30 +20,36 @@ export interface AppSettings {
   customVocabulary: string
 }
 
-export type ApiKeyName = 'openrouterApiKey' | 'zernioApiKey'
+export type ApiKeyName = 'openrouterApiKey' | 'groqApiKey' | 'zernioApiKey'
 export type PublicSettings = Pick<AppSettings, 'outputDirectory' | 'pythonPath' | 'customVocabulary'> & {
   openrouterConfigured: boolean
+  groqConfigured: boolean
+  aiProvider: 'openrouter' | 'groq'
   zernioConfigured: boolean
 }
 
-const SECRET_KEYS = ['openrouterApiKey', 'zernioApiKey'] as const
+const SECRET_KEYS = ['openrouterApiKey', 'groqApiKey', 'zernioApiKey'] as const
 type SecretKey = (typeof SECRET_KEYS)[number]
 
 const DEFAULT_SETTINGS: AppSettings = {
   openrouterApiKey: '',
+  groqApiKey: '',
+  aiProvider: 'openrouter',
   zernioApiKey: '',
   outputDirectory: join(app.getPath('home'), 'BridgeClip'),
   pythonPath: process.platform === 'win32' ? 'python' : 'python3',
   customVocabulary: ''
 }
 
-const SETTINGS_VERSION = 7
+const SETTINGS_VERSION = 8
 
 type PersistedSecret = { scheme: 'safeStorage' | 'base64'; value: string } | ''
 
 interface PersistedSettings {
   version: number
   openrouterApiKey: PersistedSecret
+  groqApiKey?: PersistedSecret
+  aiProvider?: 'openrouter' | 'groq'
   zernioApiKey: PersistedSecret
   outputDirectory: string
   pythonPath: string
@@ -61,11 +69,14 @@ function getSettingsPath(): string {
 
 function normalizeSettings(settings: Partial<AppSettings>): AppSettings {
   if (!settings || typeof settings !== 'object') throw new Error('Invalid settings')
-  for (const key of Object.keys(DEFAULT_SETTINGS) as (keyof AppSettings)[]) {
+  if (settings.aiProvider !== undefined && !['openrouter', 'groq'].includes(settings.aiProvider)) throw new Error('Invalid AI provider')
+  for (const key of Object.keys(DEFAULT_SETTINGS).filter((key) => key !== 'aiProvider') as (keyof AppSettings)[]) {
     if (settings[key] !== undefined && (typeof settings[key] !== 'string' || settings[key]!.length > 8192 || settings[key]!.includes('\0'))) throw new Error(`Invalid ${key}`)
   }
   const normalized: AppSettings = {
     openrouterApiKey: (settings.openrouterApiKey ?? DEFAULT_SETTINGS.openrouterApiKey).trim(),
+    groqApiKey: (settings.groqApiKey ?? DEFAULT_SETTINGS.groqApiKey).trim(),
+    aiProvider: settings.aiProvider ?? DEFAULT_SETTINGS.aiProvider,
     zernioApiKey: (settings.zernioApiKey ?? DEFAULT_SETTINGS.zernioApiKey).trim(),
     outputDirectory: (settings.outputDirectory || DEFAULT_SETTINGS.outputDirectory).trim(),
     pythonPath: (settings.pythonPath || DEFAULT_SETTINGS.pythonPath).trim(),
@@ -78,7 +89,7 @@ function normalizeSettings(settings: Partial<AppSettings>): AppSettings {
 }
 
 function canEncrypt(): boolean {
-  return app.isReady() && safeStorage.isEncryptionAvailable() &&
+  return (typeof app.isReady !== 'function' || app.isReady()) && safeStorage.isEncryptionAvailable() &&
     (process.platform !== 'linux' || safeStorage.getSelectedStorageBackend() !== 'basic_text')
 }
 
@@ -140,6 +151,7 @@ export function loadSettings(): AppSettings {
 
     const settings = normalizeSettings({
       ...secrets,
+      aiProvider: raw.aiProvider === 'groq' ? 'groq' : 'openrouter',
       outputDirectory: typeof raw.outputDirectory === 'string' ? raw.outputDirectory : DEFAULT_SETTINGS.outputDirectory,
       pythonPath: typeof raw.pythonPath === 'string' ? raw.pythonPath : DEFAULT_SETTINGS.pythonPath,
       customVocabulary: typeof raw.customVocabulary === 'string' ? raw.customVocabulary : DEFAULT_SETTINGS.customVocabulary
@@ -159,6 +171,8 @@ function writeSettings(settings: AppSettings): void {
   const persisted: PersistedSettings = {
     version: SETTINGS_VERSION,
     openrouterApiKey: encodeSecret(settings.openrouterApiKey),
+    groqApiKey: encodeSecret(settings.groqApiKey),
+    aiProvider: settings.aiProvider,
     zernioApiKey: encodeSecret(settings.zernioApiKey),
     outputDirectory: settings.outputDirectory,
     pythonPath: settings.pythonPath,
@@ -191,17 +205,20 @@ export function publicSettings(settings: AppSettings): PublicSettings {
     pythonPath: settings.pythonPath,
     customVocabulary: settings.customVocabulary,
     openrouterConfigured: Boolean(settings.openrouterApiKey),
+    groqConfigured: Boolean(settings.groqApiKey),
+    aiProvider: settings.aiProvider,
     zernioConfigured: Boolean(settings.zernioApiKey)
   }
 }
 
-export function savePublicSettings(update: Pick<PublicSettings, 'outputDirectory' | 'pythonPath' | 'customVocabulary'>): PublicSettings {
+export function savePublicSettings(update: Pick<PublicSettings, 'outputDirectory' | 'pythonPath' | 'customVocabulary' | 'aiProvider'>): PublicSettings {
   const current = loadSettings()
   return publicSettings(saveSettings({
     ...current,
     outputDirectory: update.outputDirectory,
     pythonPath: update.pythonPath,
-    customVocabulary: update.customVocabulary
+    customVocabulary: update.customVocabulary,
+    aiProvider: update.aiProvider ?? current.aiProvider
   }))
 }
 
@@ -233,7 +250,9 @@ export function replaceApiKey(key: ApiKeyName, value: string): PublicSettings {
 
 export function getSettingsForBridge(settings: AppSettings): Record<string, string> {
   return {
-    OPENROUTER_API_KEY: settings.openrouterApiKey,
+    OPENROUTER_API_KEY: settings.aiProvider === 'openrouter' ? settings.openrouterApiKey : '',
+    GROQ_API_KEY: settings.aiProvider === 'groq' ? settings.groqApiKey : '',
+    AI_PROVIDER: settings.aiProvider,
     LOCAL_MODE: 'true',
     LOCAL_OUTPUT_DIR: settings.outputDirectory
   }

@@ -233,7 +233,7 @@ function validatedUpdate(raw: unknown): AutomationUpdate {
   if (value.enabled && (!value.profileId || accounts.length === 0 || times.length === 0)) throw new Error('Choose a profile, an account in it, and at least one daily time before enabling.')
   if (value.enabled && value.metadataMode === 'ai') {
     const settings = loadSettings()
-    if (!settings.openrouterApiKey) throw new Error('Add an OpenRouter API key in Settings before enabling automatic metadata.')
+    if (!(settings.aiProvider === 'groq' ? settings.groqApiKey : settings.openrouterApiKey)) throw new Error(`Add a ${settings.aiProvider === 'groq' ? 'Groq' : 'OpenRouter'} API key in Settings before enabling automatic metadata.`)
   }
   return { name, enabled: value.enabled, profileId: value.profileId, metadataMode: value.metadataMode, accounts, times, timezone: value.timezone, youtubeVisibility: value.youtubeVisibility, youtubeMadeForKids: value.youtubeMadeForKids }
 }

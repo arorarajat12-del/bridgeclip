@@ -16,6 +16,8 @@ export function SetupCard({ onOpenSettings, className }: { onOpenSettings: () =>
   const toolStatus = useSettingsStore((s) => s.toolStatus)
   const toolError = useSettingsStore((s) => s.toolError)
   const { drafts, setDraft, persist, error } = useApiKeyDrafts()
+  const aiProvider = useSettingsStore((s) => s.aiProvider)
+  const saveSettings = useSettingsStore((s) => s.save)
   const missingTools = toolStatus
     ? [
         !toolStatus.python && 'Python',
@@ -44,20 +46,28 @@ export function SetupCard({ onOpenSettings, className }: { onOpenSettings: () =>
           </IconTile>
           <div className="min-w-0">
             <p className="eyebrow text-accent-hover">One-time setup</p>
-            <h2 className="mt-0.5 text-base font-semibold text-ink">Connect OpenRouter</h2>
+            <h2 className="mt-0.5 text-base font-semibold text-ink">Connect your AI provider</h2>
             <p className="mt-0.5 max-w-2xl text-xs text-ink-muted">
-              BridgeClip has no account and no server. One OpenRouter key covers transcription with MAI Transcribe 2 and clip selection.
+              BridgeClip has no account and no server. Choose OpenRouter or Groq for transcription and clip selection.
             </p>
           </div>
         </div>
         <div className="relative m-3 grid gap-3 rounded-xl bg-black/15 p-3 shadow-[inset_0_0_0_1px_rgb(255_255_255/0.06)]">
+          <div className="flex gap-2" role="radiogroup" aria-label="AI provider">
+            {(['openrouter', 'groq'] as const).map((provider) => (
+              <Button key={provider} variant={aiProvider === provider ? 'primary' : 'secondary'}
+                onClick={() => void saveSettings({ aiProvider: provider })}>
+                {provider === 'groq' ? 'Groq' : 'OpenRouter'}
+              </Button>
+            ))}
+          </div>
           <ApiKeyInput
-            label="OpenRouter"
-            value={drafts.openrouterApiKey}
-            onChange={(v) => setDraft('openrouterApiKey', v)}
+            label={aiProvider === 'groq' ? 'Groq' : 'OpenRouter'}
+            value={aiProvider === 'groq' ? drafts.groqApiKey : drafts.openrouterApiKey}
+            onChange={(v) => setDraft(aiProvider === 'groq' ? 'groqApiKey' : 'openrouterApiKey', v)}
             onBlur={() => void persist()}
-            placeholder="sk-or-…"
-            getKeyUrl={PROVIDER_LINKS.openrouter}
+            placeholder={aiProvider === 'groq' ? 'gsk_…' : 'sk-or-…'}
+            getKeyUrl={aiProvider === 'groq' ? PROVIDER_LINKS.groq : PROVIDER_LINKS.openrouter}
           />
         </div>
         <p className="relative -mt-1 flex items-center gap-1.5 px-3.5 pb-3 text-2xs text-ink-subtle">

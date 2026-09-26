@@ -1,0 +1,10 @@
+extends: ./electron-builder.yml
+appId: com.arorarajat12.bridgeclip.groq
+productName: BridgeClip Groq
+artifactName: BridgeClip-Groq-${version}-${os}-${arch}.${ext}
+mac:
+  identity: null
+  notarize: false
+  target:
+    - dmg
+    - zip

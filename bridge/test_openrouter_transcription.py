@@ -18,7 +18,7 @@ stt = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = stt
 with patch.dict(sys.modules, {
     "clip_engine.config": types.SimpleNamespace(get_settings=lambda: types.SimpleNamespace(
-        openrouter_api_key="test-openrouter", transcription_diarize=True,
+        openrouter_api_key="test-openrouter", active_ai_key="test-openrouter", ai_provider="openrouter", transcription_diarize=True,
         transcription_model="microsoft/mai-transcribe-2")),
     "clip_engine.services.media_process": types.SimpleNamespace(
         MEDIA_INPUT_OPTIONS=[], run_media=lambda *args, **kwargs: None),
@@ -200,6 +200,41 @@ class TranscriptionTests(unittest.TestCase):
                     asyncio.run(self.service._request_transcript(str(audio), None, None))
                 self.assertEqual(caught.exception.reason, reason)
                 self.assertEqual(caught.exception.status_code, status)
+
+    def test_groq_transcription_uses_multipart_and_word_timestamps(self):
+        calls = []
+        self.service.settings.ai_provider = "groq"
+        self.service.settings.active_ai_key = "test-groq"
+        self.service.settings.transcription_model = stt.GROQ_TRANSCRIPTION_MODEL
+
+        class Response:
+            status_code = 200
+            headers = {}
+            async def __aenter__(self): return self
+            async def __aexit__(self, *args): pass
+            async def aiter_raw(self): yield json.dumps({"text": "Hello", "words": [{"word": "Hello", "start": 0.1, "end": 0.5}]}).encode()
+
+        class Client:
+            def __init__(self, **kwargs): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *args): pass
+            def stream(self, *args, **kwargs):
+                calls.append((args, kwargs))
+                return Response()
+
+        class HTTPError(Exception): pass
+        httpx = types.SimpleNamespace(AsyncClient=Client, Timeout=lambda *a, **k: 90,
+                                      TimeoutException=HTTPError, NetworkError=HTTPError, HTTPError=HTTPError)
+        with tempfile.TemporaryDirectory() as work, patch.dict(sys.modules, {"httpx": httpx}):
+            audio = Path(work) / "audio.wav"
+            audio.write_bytes(b"test audio")
+            result = asyncio.run(self.service._request_transcript(str(audio), "en", ["BridgeClip"]))
+        args, request = calls[0]
+        self.assertEqual(args, ("POST", "https://api.groq.com/openai/v1/audio/transcriptions"))
+        self.assertEqual(request["headers"]["Authorization"], "Bearer test-groq")
+        self.assertEqual(request["files"]["file"][1], b"test audio")
+        self.assertEqual(request["data"]["timestamp_granularities[]"], "word")
+        self.assertEqual(result["words"][0]["word"], "Hello")
 
 
 if __name__ == "__main__":

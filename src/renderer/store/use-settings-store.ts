@@ -11,7 +11,7 @@ interface SettingsState extends ClipSettings {
   toolError: string | null
   load: () => Promise<void>
   save: (settings: Partial<ClipSettings>) => Promise<void>
-  replaceApiKey: (key: 'openrouterApiKey' | 'zernioApiKey', value: string) => Promise<void>
+  replaceApiKey: (key: 'openrouterApiKey' | 'groqApiKey' | 'zernioApiKey', value: string) => Promise<void>
   checkTools: () => Promise<void>
 }
 
@@ -22,6 +22,8 @@ let latestToolCheck = 0
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   openrouterConfigured: false,
+  groqConfigured: false,
+  aiProvider: 'openrouter',
   zernioConfigured: false,
   outputDirectory: '',
   pythonPath: 'python3',
@@ -86,6 +88,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 function pickSettings(s: ClipSettings): ClipSettings {
   return {
     openrouterConfigured: s.openrouterConfigured,
+    groqConfigured: s.groqConfigured,
+    aiProvider: s.aiProvider,
     zernioConfigured: s.zernioConfigured,
     outputDirectory: s.outputDirectory,
     pythonPath: s.pythonPath,
@@ -95,14 +99,16 @@ function pickSettings(s: ClipSettings): ClipSettings {
 
 export type SetupState = { ready: boolean; missingKeys: string[]; toolsOk: boolean | null }
 
-/** Whether a clip job can start: the OpenRouter key is present and, once the
+/** Whether a clip job can start: the selected provider key is present and, once the
  *  system check has run, every required tool found. */
 export function useSetupState(): SetupState {
   const openrouter = useSettingsStore((s) => s.openrouterConfigured)
+  const groq = useSettingsStore((s) => s.groqConfigured)
+  const aiProvider = useSettingsStore((s) => s.aiProvider)
   const tools = useSettingsStore((s) => s.toolStatus)
   const toolError = useSettingsStore((s) => s.toolError)
   const checkingTools = useSettingsStore((s) => s.checkingTools)
-  const missingKeys = [!openrouter && 'OpenRouter'].filter(Boolean) as string[]
+  const missingKeys = [aiProvider === 'groq' ? !groq && 'Groq' : !openrouter && 'OpenRouter'].filter(Boolean) as string[]
   const toolsOk = toolError ? false : tools
     ? tools.python && tools.pythonDeps && tools.ffmpeg && tools.ffprobe && tools.ytdlp && tools.engine && tools.bridgeRunner
     : null

@@ -23,7 +23,7 @@ type SectionTone = 'success' | 'warning' | 'danger' | 'idle'
 
 /** `showUpdates` changes each time Help → Check for Updates… asks for the Updates row. */
 export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): React.JSX.Element {
-  const { outputDirectory, pythonPath, customVocabulary, openrouterConfigured, zernioConfigured, saving, save, toolStatus, toolError, checkTools, checkingTools } =
+  const { outputDirectory, pythonPath, customVocabulary, openrouterConfigured, groqConfigured, aiProvider, zernioConfigured, saving, save, toolStatus, toolError, checkTools, checkingTools } =
     useSettingsStore()
   const keys = useApiKeyDrafts()
   const [isPackaged, setIsPackaged] = useState(true)
@@ -50,7 +50,7 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
   const tools = toolRows(toolStatus)
   const toolsChecked = tools.every((row) => row.ok != null)
   const toolsMissing = tools.filter((row) => !row.optional && row.ok === false).length
-  const keysMissing = Number(!openrouterConfigured)
+  const keysMissing = Number(!(aiProvider === 'groq' ? groqConfigured : openrouterConfigured))
   const vocabularyTerms = customVocabulary.split('\n').filter((line) => line.trim()).length
 
   const sections: { id: SectionId; label: string; icon: ReactNode; tone: SectionTone }[] = [
@@ -70,7 +70,7 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
   }, [showUpdates])
 
   const checks: { label: string; ok: boolean | null; detail: string; section: SectionId; optional?: boolean; tone?: 'danger' }[] = [
-    { label: 'OpenRouter', ok: openrouterConfigured, detail: openrouterConfigured ? 'Key saved' : 'Needed to transcribe and pick clips', section: 'keys' },
+    { label: aiProvider === 'groq' ? 'Groq' : 'OpenRouter', ok: aiProvider === 'groq' ? groqConfigured : openrouterConfigured, detail: keysMissing ? 'Needed to transcribe and pick clips' : 'Key saved', section: 'keys' },
     { label: 'Tools', ok: toolsChecked ? toolsMissing === 0 : null, detail: !toolsChecked ? (checkingTools ? 'Checking…' : 'Not checked') : toolsMissing ? `${toolsMissing} missing` : 'All installed', section: 'system', tone: 'danger' },
     { label: 'Zernio', ok: zernioConfigured, detail: zernioConfigured ? 'Posting on' : 'Optional, for posting', section: 'keys', optional: true }
   ]
@@ -112,7 +112,7 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
                 <IconTile tone={blocking ? 'warning' : 'success'} size="lg">{blocking ? <KeyRound /> : <Check strokeWidth={3} />}</IconTile>
                 <div>
                   <h2 className="text-sm font-semibold text-ink">{blocking ? `${blocking} thing${blocking === 1 ? '' : 's'} to set up before clipping` : 'Ready to clip'}</h2>
-                  <p className="mt-0.5 text-xs text-ink-muted">{APP_NAME} runs on this computer. One OpenRouter key covers transcription and clip selection.</p>
+                  <p className="mt-0.5 text-xs text-ink-muted">{APP_NAME} runs on this computer. Your selected AI provider handles transcription and clip selection.</p>
                 </div>
               </div>
             </div>
@@ -141,6 +141,18 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
               description="Encrypted with your system keychain. BridgeClip has no account and no server of its own."
             />
             <div className="mt-4 space-y-2">
+              <div className="glass-tile rounded-2xl px-3 py-3">
+                <p className="mb-2 text-sm font-medium text-ink">AI provider</p>
+                <div className="flex gap-2" role="radiogroup" aria-label="AI provider">
+                  {(['openrouter', 'groq'] as const).map((provider) => (
+                    <Button key={provider} variant={aiProvider === provider ? 'primary' : 'ghost'}
+                      onClick={() => void commit({ aiProvider: provider })}>
+                      {provider === 'groq' ? 'Groq' : 'OpenRouter'}
+                    </Button>
+                  ))}
+                </div>
+                <p className="mt-2 text-xs text-ink-muted">Choose which saved key BridgeClip uses for clipping and automatic metadata.</p>
+              </div>
               <KeyRow>
                 <ApiKeyInput
                   label="OpenRouter"
@@ -150,8 +162,21 @@ export function SettingsPage({ showUpdates = 0 }: { showUpdates?: number }): Rea
                   onRemove={() => void keys.remove('openrouterApiKey')}
                   onBlur={() => void keys.persist()}
                   placeholder="sk-or-…"
-                  description="Transcribes with MAI Transcribe 2 and picks the moments worth clipping."
+                  description="Uses OpenRouter models for transcription, planning, vision and automatic metadata."
                   getKeyUrl={PROVIDER_LINKS.openrouter}
+                />
+              </KeyRow>
+              <KeyRow>
+                <ApiKeyInput
+                  label="Groq"
+                  value={keys.drafts.groqApiKey}
+                  configured={groqConfigured}
+                  onChange={(v) => keys.setDraft('groqApiKey', v)}
+                  onRemove={() => void keys.remove('groqApiKey')}
+                  onBlur={() => void keys.persist()}
+                  placeholder="gsk_…"
+                  description="Uses Groq for transcription, planning, vision and automatic metadata."
+                  getKeyUrl={PROVIDER_LINKS.groq}
                 />
               </KeyRow>
               <p className="eyebrow px-1 pt-2">Optional</p>

@@ -628,9 +628,10 @@ class AIClippingPipeline:
 
             if layout_vision_cost:
                 api_costs["layout_vision"] = {
-                    "provider": "openrouter",
+                    "provider": self.settings.ai_provider,
                     "model": self.settings.layout_vision_model,
                     "estimated_cost_usd": round(layout_vision_cost, 6),
+                    "cost_incomplete": self.settings.ai_provider == "groq",
                 }
                 total_cost += layout_vision_cost
 

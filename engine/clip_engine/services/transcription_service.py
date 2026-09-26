@@ -61,12 +61,16 @@ class TranscriptionApiCosts:
 TRANSCRIPTION_MODEL = "microsoft/mai-transcribe-2"
 BUDGET_TRANSCRIPTION_MODEL = "openai/whisper-large-v3-turbo"
 BUDGET_FALLBACK_MODEL = "openai/whisper-large-v3"
+GROQ_TRANSCRIPTION_MODEL = "whisper-large-v3"
+GROQ_BUDGET_MODEL = "whisper-large-v3-turbo"
 TRANSCRIPTION_ATTEMPTS_PER_MODEL = 2
 MAX_TRANSCRIPTION_RETRY_WAIT = 15.0
 TRANSCRIPTION_MODEL_NAMES = {
     BUDGET_TRANSCRIPTION_MODEL: "Whisper Turbo",
     BUDGET_FALLBACK_MODEL: "Whisper Large V3",
     TRANSCRIPTION_MODEL: "MAI Transcribe 2",
+    GROQ_TRANSCRIPTION_MODEL: "Groq Whisper Large V3",
+    GROQ_BUDGET_MODEL: "Groq Whisper Turbo",
 }
 TRANSCRIPTION_CHUNK_SECONDS = 300
 # Context kept around a requested time range so sentence boundaries at its edges still resolve.
@@ -84,6 +88,8 @@ def _estimate_transcription_cost(duration_seconds: float, model: str = TRANSCRIP
     price = {
         BUDGET_TRANSCRIPTION_MODEL: WHISPER_TURBO_PRICE_PER_HOUR,
         BUDGET_FALLBACK_MODEL: WHISPER_V3_PRICE_PER_HOUR,
+        GROQ_TRANSCRIPTION_MODEL: 0.111,
+        GROQ_BUDGET_MODEL: 0.04,
     }.get(model, MAI_PRICE_PER_HOUR)
     return round(duration_seconds / 3600.0 * price, 8)
 
@@ -569,18 +575,20 @@ class TranscriptionService:
         """
         if not os.path.isfile(audio_path):
             raise TranscriptionError("Audio file not found", reason="audio_missing")
-        if not self.settings.openrouter_api_key:
+        if not self.settings.active_ai_key:
             raise TranscriptionProviderError("auth")
         if translate_to_english:
             raise TranscriptionError("Audio translation is not supported", reason="translation_unsupported")
         duration = await asyncio.to_thread(self._audio_duration, audio_path)
         segments: list[TranscriptSegment] = []
-        costs = TranscriptionApiCosts(model="")
+        costs = TranscriptionApiCosts(provider=self.settings.ai_provider, model="")
         detected_language = None
         primary = self.settings.transcription_model
         # Keep the recovered model for the rest of this run. Retrying an
         # unavailable model for each chunk causes repeated failures and costs.
-        models = list(dict.fromkeys((primary, BUDGET_FALLBACK_MODEL, TRANSCRIPTION_MODEL, BUDGET_TRANSCRIPTION_MODEL)))
+        models = (list(dict.fromkeys((primary, GROQ_TRANSCRIPTION_MODEL, GROQ_BUDGET_MODEL)))
+                  if self.settings.ai_provider == "groq" else
+                  list(dict.fromkeys((primary, BUDGET_FALLBACK_MODEL, TRANSCRIPTION_MODEL, BUDGET_TRANSCRIPTION_MODEL))))
         if getattr(self.settings, "clipping_mode", "quality") == "advanced":
             models = [primary]
         chunk_count = max(1, math.ceil(duration / TRANSCRIPTION_CHUNK_SECONDS))
@@ -619,6 +627,7 @@ class TranscriptionService:
             segments=segments, full_text=" ".join(segment.text for segment in segments),
             language=detected_language, duration_seconds=duration,
             model=costs.model,
+            provider=self.settings.ai_provider,
             api_costs=costs,
         )
 
@@ -681,7 +690,7 @@ class TranscriptionService:
         cost = usage.get("cost")
         incomplete = False
         if not _nonnegative_number(cost):
-            incomplete = model not in (TRANSCRIPTION_MODEL, BUDGET_TRANSCRIPTION_MODEL, BUDGET_FALLBACK_MODEL)
+            incomplete = model not in (TRANSCRIPTION_MODEL, BUDGET_TRANSCRIPTION_MODEL, BUDGET_FALLBACK_MODEL, GROQ_TRANSCRIPTION_MODEL, GROQ_BUDGET_MODEL)
             cost = 0.0 if incomplete else _estimate_transcription_cost(billed, model)
         return TranscriptionApiCosts(model=model, audio_duration_seconds=billed, estimated_cost_usd=cost, cost_incomplete=incomplete)
 
@@ -718,6 +727,18 @@ class TranscriptionService:
             raise TranscriptionError("Transcription audio chunk is too large", reason="audio_chunk_too_large")
         audio = await asyncio.to_thread(Path(audio_path).read_bytes)
         model = model or getattr(getattr(self, "settings", None), "transcription_model", TRANSCRIPTION_MODEL)
+        if self.settings.ai_provider == "groq":
+            data = {"model": model, "response_format": "verbose_json", "timestamp_granularities[]": "word"}
+            phrases = normalize_keyterms(keyterms)
+            if phrases:
+                data["prompt"] = "Expected vocabulary: " + ", ".join(phrases)
+            if language and language != "auto":
+                data["language"] = language
+            return await self._post_transcript(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                {"Authorization": f"Bearer {self.settings.active_ai_key}", "Accept-Encoding": "identity"},
+                files={"file": (Path(audio_path).name, audio, "audio/wav")}, data=data,
+            )
         payload = {
             "model": model,
             "input_audio": {"data": base64.b64encode(audio).decode("ascii"), "format": Path(audio_path).suffix.lstrip(".").lower()},
@@ -735,11 +756,18 @@ class TranscriptionService:
             payload["provider"] = {"options": {"groq": {"prompt": "Expected vocabulary: " + ", ".join(phrases)}}}
         if language and language != "auto":
             payload["language"] = language
+        return await self._post_transcript(
+            "https://openrouter.ai/api/v1/audio/transcriptions",
+            {"Authorization": f"Bearer {self.settings.openrouter_api_key}", "Accept-Encoding": "identity"},
+            json=payload,
+        )
+
+    async def _post_transcript(self, url: str, headers: dict, **kwargs) -> dict:
+        import httpx
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(90.0, connect=15.0), follow_redirects=False) as client:
                 async with client.stream(
-                    "POST", "https://openrouter.ai/api/v1/audio/transcriptions",
-                    headers={"Authorization": f"Bearer {self.settings.openrouter_api_key}", "Accept-Encoding": "identity"}, json=payload,
+                    "POST", url, headers=headers, **kwargs,
                 ) as response:
                     if response.status_code != 200:
                         raise _provider_failure(response.status_code, response.headers.get("Retry-After"))
@@ -807,6 +835,7 @@ class TranscriptionService:
             segments=segments, full_text=text.strip(),
             language=response.get("language") if isinstance(response.get("language"), str) else None,
             duration_seconds=audio_duration,
+            provider=self.settings.ai_provider,
             model=model,
             api_costs=self._response_cost(response, audio_duration, model),
         )

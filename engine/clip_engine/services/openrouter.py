@@ -71,6 +71,7 @@ async def chat_completion(
         and network failures.
     """
     model = payload.get("model", "")
+    provider_name = "Groq" if "api.groq.com" in str(getattr(client, "base_url", "")) else "OpenRouter"
     try:
         async with client.stream(
             "POST", "/chat/completions", json=payload,
@@ -79,35 +80,35 @@ async def chat_completion(
             # Do not hand attacker-controlled compressed bodies to an unbounded
             # decompressor. The request explicitly negotiates an identity body.
             if response.headers.get("content-encoding", "identity").lower() != "identity":
-                raise OpenRouterError("OpenRouter returned an unsupported response encoding")
+                raise OpenRouterError(f"{provider_name} returned an unsupported response encoding")
             content = bytearray()
             async for chunk in response.aiter_raw():
                 if len(chunk) > MAX_CHAT_RESPONSE_BYTES - len(content):
-                    raise OpenRouterError("OpenRouter response exceeds the size limit")
+                    raise OpenRouterError(f"{provider_name} response exceeds the size limit")
                 content.extend(chunk)
             status = response.status_code
     except (httpx.TimeoutException, httpx.TransportError):
-        raise OpenRouterError("OpenRouter request failed", retryable=True) from None
+        raise OpenRouterError(f"{provider_name} request failed", retryable=True) from None
 
     if status == 402:
         raise OpenRouterError(
-            "OpenRouter account is out of credits. Add credits at openrouter.ai/credits."
+            f"{provider_name} account is out of credits. " + ("Check GroqCloud billing." if provider_name == "Groq" else "Add credits at openrouter.ai/credits.")
         )
     if status != 200:
         raise OpenRouterError(
-            f"OpenRouter API error ({status})",
+            f"{provider_name} API error ({status})",
             retryable=status in RETRYABLE_STATUS_CODES,
         )
     try:
         body = json.loads(content)
     except (ValueError, UnicodeError, RecursionError):
-        raise OpenRouterError("OpenRouter returned invalid JSON") from None
+        raise OpenRouterError(f"{provider_name} returned invalid JSON") from None
     if not isinstance(body, dict):
-        raise OpenRouterError("OpenRouter returned an invalid response")
+        raise OpenRouterError(f"{provider_name} returned an invalid response")
 
     # OpenRouter can return 200 with an upstream provider error in the body.
     if body.get("error"):
-        raise OpenRouterError("OpenRouter provider error", retryable=True)
+        raise OpenRouterError(f"{provider_name} provider error", retryable=True)
 
     usage = body.get("usage") or {}
     cost = usage.get("cost")

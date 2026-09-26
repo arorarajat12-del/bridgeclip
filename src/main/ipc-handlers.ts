@@ -65,7 +65,7 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
   handle('settings:save', (_event, settings: PublicSettings) => {
     const current = loadSettings()
     if (!settings || typeof settings !== 'object') throw new Error('Invalid settings')
-    if (typeof settings.outputDirectory !== 'string' || typeof settings.pythonPath !== 'string' || typeof settings.customVocabulary !== 'string') throw new Error('Invalid settings')
+    if (typeof settings.outputDirectory !== 'string' || typeof settings.pythonPath !== 'string' || typeof settings.customVocabulary !== 'string' || (settings.aiProvider !== undefined && !['openrouter', 'groq'].includes(settings.aiProvider))) throw new Error('Invalid settings')
     if (settings.outputDirectory !== current.outputDirectory && !selectedOutputDirectories.has(settings.outputDirectory)) throw new Error('Choose the output folder with the folder picker')
     if (app.isPackaged && settings.pythonPath !== current.pythonPath) throw new Error('Runtime paths cannot be changed in packaged builds')
     return savePublicSettings(settings)
@@ -160,9 +160,11 @@ export function registerIpcHandlers(getMainWindow: () => BrowserWindow | null): 
     } catch (error) { return { error: error instanceof Error ? error.message : 'Invalid job options' } }
     const settings = loadSettings()
 
-    if (!settings.openrouterApiKey) {
-      logger.warn('job.start.missingKey', { key: 'OPENROUTER_API_KEY' })
-      return { error: 'OpenRouter API key is required for AI clip planning. Go to Settings to add it.' }
+    if (settings.aiProvider === 'groq' && config.clippingMode === 'advanced') return { error: 'Advanced model selection uses OpenRouter. Choose Quality or Economy for Groq.' }
+
+    if (!(settings.aiProvider === 'groq' ? settings.groqApiKey : settings.openrouterApiKey)) {
+      logger.warn('job.start.missingKey', { key: settings.aiProvider === 'groq' ? 'GROQ_API_KEY' : 'OPENROUTER_API_KEY' })
+      return { error: `${settings.aiProvider === 'groq' ? 'Groq' : 'OpenRouter'} API key is required for AI clip planning. Go to Settings to add it.` }
     }
 
     const enginePath = getEnginePath()

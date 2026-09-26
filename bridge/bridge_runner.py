@@ -122,6 +122,10 @@ def describe_failure(error: object) -> dict:
     text = str(error or "").lower()
     for markers, message, hint in FAILURES:
         if any(marker in text for marker in markers):
+            if os.environ.get("AI_PROVIDER") == "groq":
+                message = message.replace("OpenRouter", "Groq")
+                hint = hint.replace("OpenRouter", "Groq")
+                hint = hint.replace("Add credits at openrouter.ai/credits or raise the key's limit at openrouter.ai/keys.", "Check your Groq account balance and rate limits in GroqCloud.")
             return {"message": message, "hint": hint}
     return {"message": "The clipping pipeline failed.", "hint": "Check System check and retry. If it persists, report the steps that reproduce it."}
 
@@ -170,7 +174,18 @@ async def run(config: dict) -> bool:
     os.environ["YTDLP_PROXY"] = ""
     os.environ["LAYOUT_VISION_ENABLED"] = "true" if config["layout_vision_enabled"] else "false"
     os.environ["CLIPPING_MODE"] = config.get("clipping_mode", "quality")
-    if config.get("clipping_mode", "quality") == "economy":
+    groq = os.environ.get("AI_PROVIDER") == "groq"
+    if groq and config.get("clipping_mode") == "advanced":
+        emit({"type": "error", "message": "Advanced model selection uses OpenRouter. Choose Quality or Economy for Groq."})
+        return False
+    if groq:
+        os.environ["PLANNER_MODEL"] = "openai/gpt-oss-20b" if config.get("clipping_mode") == "economy" else "openai/gpt-oss-120b"
+        os.environ["PLANNER_FALLBACK_MODELS"] = ""
+        os.environ["LAYOUT_VISION_MODEL"] = "qwen/qwen3.8-27b"
+        os.environ["LAYOUT_VISION_FALLBACK_MODELS"] = ""
+        os.environ["PLANNER_REASONING_EFFORT"] = "none"
+        os.environ["LAYOUT_VISION_REASONING_EFFORT"] = "none"
+    if config.get("clipping_mode", "quality") == "economy" and not groq:
         # Each job has its own bridge process, so model choices cannot leak to
         # another queued or concurrent run. Do not fall back to higher-cost planners.
         os.environ["PLANNER_MODEL"] = "z-ai/glm-5.3-flash"
@@ -207,8 +222,8 @@ async def run(config: dict) -> bool:
     settings = get_settings()
 
     missing = []
-    if not settings.openrouter_api_key:
-        missing.append("OPENROUTER_API_KEY")
+    if not settings.active_ai_key:
+        missing.append("GROQ_API_KEY" if settings.ai_provider == "groq" else "OPENROUTER_API_KEY")
     if missing:
         emit({"type": "error", "message": f"Missing required API keys: {', '.join(missing)}"})
         return False

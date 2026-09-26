@@ -1,0 +1,53 @@
+name: Build BridgeClip Groq for macOS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-arm64
+            arch: arm64
+          - runner: macos-15
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      BRIDGECLIP_DISABLE_AUTO_UPDATE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install media build dependencies
+        run: brew install pkg-config libass nasm
+      - name: Install app dependencies
+        run: npm ci
+      - name: Check source
+        run: |
+          npm run typecheck
+          npm run lint
+          npm run test:renderer
+      - name: Prepare bundled macOS runtime
+        run: bash scripts/prepare-resources.sh "${{ matrix.arch }}"
+      - name: Build macOS installer
+        run: |
+          npm run build
+          npx electron-builder --mac --${{ matrix.arch }} --publish never --config electron-builder.groq-mac.yml
+      - name: Upload macOS installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: BridgeClip-Groq-macOS-${{ matrix.arch }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+          if-no-files-found: error
